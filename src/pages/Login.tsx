@@ -1,97 +1,56 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Eye, EyeOff, Lock, Mail, Building2, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, AlertCircle, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useToast } from '@/hooks/use-toast';
-import { signIn, getRedirectPath } from '@/lib/auth';
 import { useAuth } from '@/contexts/AuthContext';
-import { sanitizeInput, isValidEmail } from '@/lib/security';
 
 const loginSchema = z.object({
-  email: z.string()
-    .min(1, 'Email is required')
-    .email('Invalid email address')
-    .max(255, 'Email is too long'),
-  password: z.string()
-    .min(1, 'Password is required')
-    .max(128, 'Password is too long'),
+  email: z.string().min(1, 'Email is required').email('Invalid email').max(255),
+  password: z.string().min(1, 'Password is required').max(128),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
+
+function getRedirectPath(role: string) {
+  switch (role) {
+    case 'admin': return '/admin';
+    case 'hr': return '/hr';
+    default: return '/employee';
+  }
+}
 
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [attempts, setAttempts] = useState(0);
   const navigate = useNavigate();
-  const location = useLocation();
-  const { toast } = useToast();
-  const { authUser, loading } = useAuth();
-
-  const sessionExpired = location.state?.expired;
+  const { user, loading, signIn } = useAuth();
 
   const form = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: '',
-      password: '',
-    },
+    defaultValues: { email: '', password: '' },
   });
 
   useEffect(() => {
-    if (!loading && authUser) {
-      navigate(getRedirectPath(authUser.role), { replace: true });
+    if (!loading && user) {
+      navigate(getRedirectPath(user.role), { replace: true });
     }
-  }, [authUser, loading, navigate]);
-
-  useEffect(() => {
-    if (sessionExpired) {
-      toast({
-        title: 'Session Expired',
-        description: 'Your session has expired. Please login again.',
-        variant: 'destructive',
-      });
-    }
-  }, [sessionExpired, toast]);
+  }, [user, loading, navigate]);
 
   const onSubmit = async (data: LoginForm) => {
     setLoginError(null);
-
-    // Validate email format
-    const sanitizedEmail = sanitizeInput(data.email.toLowerCase());
-    if (!isValidEmail(sanitizedEmail)) {
-      setLoginError('Please enter a valid email address.');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      await signIn(sanitizedEmail, data.password);
-      setAttempts(0);
-      toast({
-        title: 'Welcome back!',
-        description: 'Login successful',
-      });
+      await signIn(data.email.toLowerCase().trim(), data.password);
     } catch (error: any) {
-      setAttempts(prev => prev + 1);
-      
-      // Generic error message to prevent user enumeration
-      const errorMessage = attempts >= 2 
-        ? 'Invalid credentials. Please check your email and password.'
-        : 'Login failed. Please try again.';
-      
-      setLoginError(errorMessage);
-      
-      // Don't expose specific error details
-      console.error('Login error occurred');
+      setLoginError(error.message || 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -100,24 +59,22 @@ export default function Login() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/30">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-4 text-center">
-         <img 
-            src="/favicon.jpg" 
-            alt="company-logo" 
-            className="w-24 sm:w-28 md:w-32 lg:w-36 mx-auto rounded-lg" 
-          />
-
+      <Card className="w-full max-w-md shadow-xl border-0">
+        <CardHeader className="space-y-4 text-center pb-2">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Building2 className="h-8 w-8" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">HRMS Portal</h1>
+            <p className="text-sm text-muted-foreground mt-1">Sign in to your account</p>
+          </div>
         </CardHeader>
         <CardContent>
           {loginError && (
@@ -138,15 +95,7 @@ export default function Login() {
                     <FormControl>
                       <div className="relative">
                         <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          placeholder="Enter your email"
-                          className="pl-10"
-                          autoComplete="email"
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          spellCheck="false"
-                          {...field}
-                        />
+                        <Input placeholder="Enter your email" className="pl-10" autoComplete="email" {...field} />
                       </div>
                     </FormControl>
                     <FormMessage />
@@ -186,7 +135,9 @@ export default function Login() {
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading ? 'Signing in...' : 'Sign In'}
               </Button>
-              <p className='text-center text-sm'>If you forgot you password Contact administrator</p>
+              <p className="text-center text-xs text-muted-foreground">
+                Forgot password? Contact your administrator
+              </p>
             </form>
           </Form>
         </CardContent>

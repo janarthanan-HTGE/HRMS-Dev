@@ -1,129 +1,82 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { User, Session } from '@supabase/supabase-js';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { AuthUser, getCurrentUser, UserRole } from '@/lib/auth';
+
+export type AppRole = 'admin' | 'hr' | 'employee';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: AppRole;
+  employee_id?: string;
+  employment_status: string;
+}
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  authUser: AuthUser | null;
+  user: AuthUser | null;
   loading: boolean;
-  signOut: () => Promise<void>;
-  refreshUser: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  session: null,
-  authUser: null,
   loading: true,
-  signOut: async () => {},
-  refreshUser: async () => {},
+  signIn: async () => {},
+  signOut: () => {},
 });
 
+const SESSION_KEY = 'hrms_session';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = useCallback(async () => {
-    try {
-      const currentUser = await getCurrentUser();
-      setAuthUser(currentUser);
-    } catch (error) {
-      console.error('Error refreshing user:', error);
-      setAuthUser(null);
+  useEffect(() => {
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (stored) {
+      try {
+        setUser(JSON.parse(stored));
+      } catch {
+        localStorage.removeItem(SESSION_KEY);
+      }
     }
+    setLoading(false);
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
+  const signIn = useCallback(async (email: string, password: string) => {
+    const { data, error } = await supabase.rpc('verify_user_password', {
+      p_email: email,
+      p_password: password,
+    });
 
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted) return;
+    if (error) throw new Error('Login failed');
 
-        setSession(session);
-        setUser(session?.user ?? null);
+    const result = data as any;
+    if (!result.success) throw new Error(result.error || 'Invalid credentials');
 
-        // Handle different auth events securely
-        if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' && !session) {
-          setAuthUser(null);
-          setLoading(false);
-          return;
-        }
-
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          // Defer fetching user details to avoid deadlock
-          if (session?.user) {
-            setTimeout(async () => {
-              if (mounted) {
-                await refreshUser();
-                setLoading(false);
-              }
-            }, 0);
-          }
-        } else {
-          setLoading(false);
-        }
-      }
-    );
-
-    // THEN check for existing session
-    const initializeAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (!mounted) return;
-
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          await refreshUser();
-        }
-      } catch (error) {
-        console.error('Auth initialization error:', error);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
+    const authUser: AuthUser = {
+      id: result.user.id,
+      email: result.user.email,
+      first_name: result.user.first_name,
+      last_name: result.user.last_name,
+      role: result.user.role,
+      employee_id: result.user.employee_id,
+      employment_status: result.user.employment_status,
     };
 
-    initializeAuth();
+    setUser(authUser);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(authUser));
+  }, []);
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, [refreshUser]);
-
-  const signOut = useCallback(async () => {
-    try {
-      // Clear local state first
-      setUser(null);
-      setSession(null);
-      setAuthUser(null);
-      
-      // Then sign out from Supabase
-      await supabase.auth.signOut();
-      
-      // Clear any cached data
-      localStorage.removeItem('supabase.auth.token');
-    } catch (error) {
-      console.error('Sign out error:', error);
-      // Still clear local state even if remote signout fails
-      setUser(null);
-      setSession(null);
-      setAuthUser(null);
-    }
+  const signOut = useCallback(() => {
+    setUser(null);
+    localStorage.removeItem(SESSION_KEY);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, authUser, loading, signOut, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
@@ -131,8 +84,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 }
